@@ -1,0 +1,14 @@
+[
+  {
+    "date": "2026-06-12 19:34",
+    "time": "19:34 UTC",
+    "pair": "GBP/USD",
+    "direction": "SELL 📉",
+    "price": 1.34176,
+    "tp": 1.341154,
+    "sl": 1.342164,
+    "rr": 1.5,
+    "strength": 2,
+    "cancelled": false
+  }
+]
