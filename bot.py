@@ -396,12 +396,12 @@ def analyze_pair(pair):
     atr = main["atr"]
     if "BUY" in direction:
         tp_distance = min(atr * 1.5, 0.00200)
-        sl_distance = tp_distance / 1.5
+        sl_distance = max(tp_distance / 1.5, atr)
         tp = round(price + tp_distance, 6)
         sl = round(price - sl_distance, 6)
     else:
         tp_distance = min(atr * 1.5, 0.00200)
-        sl_distance = tp_distance / 1.5
+        sl_distance = max(tp_distance / 1.5, atr)
         tp = round(price - tp_distance, 6)
         sl = round(price + sl_distance, 6)
     rr = round(abs(tp - price) / abs(sl - price), 2)
@@ -566,81 +566,97 @@ def run_server():
     server.serve_forever()
 
 
+def get_debug_report(pair):
+    """Debug report: RSI optional، MACD+EMA200+Trend إلزاميين، Score/4"""
+    lines = [f"🔍 {pair}"]
+
+    REQUIRED_CONFIRMATIONS = 2
+    buy_ready_count = 0
+    sell_ready_count = 0
+
+    for tf in TIMEFRAMES:
+        result = get_cached_data(pair, tf)
+        tf_label = {"15min": "15min", "1h": "1H", "4h": "4H"}.get(tf, tf)
+        lines.append(f"\n━━━━━━━━")
+        lines.append(tf_label)
+
+        if not result:
+            lines.append("⚠️ بيانات ناقصة")
+            continue
+
+        closes, highs, lows = result
+        rsi    = calc_rsi(closes)
+        macd, signal_val = calc_macd(closes)
+        atr    = calc_atr(highs, lows, closes)
+        ema200 = calc_ema(closes, 200)
+        trend  = get_trend_structure(closes)
+
+        if macd is None or ema200 is None or atr is None:
+            lines.append("⚠️ بيانات ناقصة")
+            continue
+
+        current_price = closes[-1]
+        macd_diff = round(macd - signal_val, 6)
+
+        # BUY checks — RSI دايما True (Optional)
+        buy_checks = {
+            "RSI":   True,
+            "MACD":  macd > signal_val,
+            "EMA200": current_price > ema200,
+            "Trend": trend == "UP",
+        }
+        buy_score = sum(buy_checks.values())
+        buy_ready = buy_score == 4
+
+        # SELL checks — RSI دايما True (Optional)
+        sell_checks = {
+            "RSI":   True,
+            "MACD":  macd < signal_val,
+            "EMA200": current_price < ema200,
+            "Trend": trend == "DOWN",
+        }
+        sell_score = sum(sell_checks.values())
+        sell_ready = sell_score == 4
+
+        # ---------- BUY display ----------
+        lines.append("\nBUY")
+        lines.append(f"ℹ️ RSI = {rsi} (Optional)")
+        lines.append(f"{'✅' if buy_checks['MACD'] else '❌'} MACD = {macd} | Signal = {signal_val} | Diff = {'+' if macd_diff >= 0 else ''}{macd_diff}")
+        lines.append(f"{'✅' if buy_checks['EMA200'] else '❌'} EMA200 → Price = {round(current_price,6)} | EMA200 = {round(ema200,6)}")
+        lines.append(f"{'✅' if buy_checks['Trend'] else '❌'} Trend = {trend}")
+        lines.append(f"Score: {buy_score}/4")
+
+        if buy_ready:
+            buy_ready_count += 1
+
+        # ---------- SELL display ----------
+        lines.append("\nSELL")
+        lines.append(f"ℹ️ RSI = {rsi} (Optional)")
+        lines.append(f"{'✅' if sell_checks['MACD'] else '❌'} MACD = {macd} | Signal = {signal_val} | Diff = {'+' if macd_diff >= 0 else ''}{macd_diff}")
+        lines.append(f"{'✅' if sell_checks['EMA200'] else '❌'} EMA200 → Price = {round(current_price,6)} | EMA200 = {round(ema200,6)}")
+        lines.append(f"{'✅' if sell_checks['Trend'] else '❌'} Trend = {trend}")
+        lines.append(f"Score: {sell_score}/4")
+
+        if sell_ready:
+            sell_ready_count += 1
+
+    # ---------- خلاصة ----------
+    trade_ready = (
+        buy_ready_count  >= REQUIRED_CONFIRMATIONS or
+        sell_ready_count >= REQUIRED_CONFIRMATIONS
+    )
+    lines.append(f"\n━━━━━━━━")
+    lines.append(f"BUY Confirmations: {buy_ready_count}/{REQUIRED_CONFIRMATIONS}")
+    lines.append(f"SELL Confirmations: {sell_ready_count}/{REQUIRED_CONFIRMATIONS}")
+    lines.append(f"Trade Status: {'✅ Trade Ready' if trade_ready else '❌ No Trade'}")
+
+    return "\n".join(lines)
+
+
 def send_hourly_report(pairs_status):
-    """كيبعت تقرير كل ساعة عن حالة السوق مع حالة كل شرط لكل timeframe"""
-    now_str = datetime.now(timezone.utc).strftime("%H:%M UTC")
-    msg = f"🕐 <b>تقرير السوق — {now_str}</b>\n━━━━━━━━━━━━━━━━\n"
-
-    for pair, status in pairs_status.items():
-        market = status.get("market")
-        tf_details = status.get("tf_details", {})
-
-        if market:
-            msg += (
-                f"\n💱 <b>{pair}</b>\n"
-                f"  {market['direction_emoji']} اليوم: {market['change_pct']:+.3f}% | "
-                f"{market['last_hour_emoji']} آخر ساعة: {market['last_hour_change']:+.6f}\n"
-            )
-        else:
-            msg += f"\n💱 <b>{pair}</b>\n"
-
-        # حالة كل timeframe
-        missing_conditions = []
-        any_ready = False
-
-        for tf, tfd in tf_details.items():
-            tf_label = {"15min": "15min", "1h": "1H", "4h": "4H"}.get(tf, tf)
-            msg += f"  <b>{tf_label}:</b>\n"
-
-            if tfd is None:
-                msg += f"    ⚠️ بيانات ناقصة\n"
-                continue
-
-            rsi_val = tfd.get("rsi")
-            macd_ok = tfd.get("macd_ok")
-            ema_ok = tfd.get("ema_ok")
-            trend_val = tfd.get("trend")
-            direction = tfd.get("direction")
-
-            rsi_str = f"{rsi_val}" if rsi_val is not None else "N/A"
-            msg += f"    ℹ️ RSI = {rsi_str} (Optional)\n"
-            msg += f"    {'✅' if macd_ok else '❌'} MACD\n"
-            msg += f"    {'✅' if ema_ok else '❌'} EMA200\n"
-            msg += f"    {'✅' if trend_val in ['UP', 'DOWN'] and direction == trend_val else '❌'} Trend = {trend_val}\n"
-
-            if not macd_ok:
-                missing_conditions.append(f"MACD ({tf_label})")
-            if not ema_ok:
-                missing_conditions.append(f"EMA200 ({tf_label})")
-            if not (trend_val in ['UP', 'DOWN'] and direction == trend_val):
-                missing_conditions.append(f"Trend ({tf_label})")
-
-            if direction:
-                any_ready = True
-
-        # خلاصة الزوج
-        if missing_conditions:
-            msg += f"  ❌ Missing Conditions:\n"
-            for mc in missing_conditions[:6]:
-                msg += f"    • {mc}\n"
-
-        msg += f"  {'✅ Trade Ready' if any_ready else '❌ No Trade'}\n"
-
-    # أخبار اليوم
-    all_news = []
+    """كيبعت تقرير ساعي — رسالة debug منفصلة لكل pair"""
     for pair in pairs_status:
-        news = get_news_summary(pair)
-        for n in news:
-            if n not in all_news:
-                all_news.append(n)
-
-    if all_news:
-        msg += f"\n📰 <b>أخبار اليوم:</b>\n"
-        msg += "\n".join([f"  {n}" for n in all_news[:5]])
-        msg += "\n"
-
-    msg += f"\n━━━━━━━━━━━━━━━━\n⏳ باقي مراقب السوق..."
-    send_telegram(msg)
+        send_telegram(get_debug_report(pair))
 
 def main_loop():
     global pending_trade, waiting_confirmation
