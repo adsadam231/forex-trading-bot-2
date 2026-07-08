@@ -277,6 +277,46 @@ def calc_atr(highs, lows, closes, period=14):
     if len(trs) < period:
         return None
     return round(sum(trs[-period:]) / period, 6)
+
+def calc_adx(highs, lows, closes, period=14):
+    """كيحسب ADX(14) — كيقيس قوة الاتجاه بغض النظر عن الاتجاه"""
+    if len(closes) < period * 2 + 1:
+        return None
+    plus_dm, minus_dm, trs = [], [], []
+    for i in range(1, len(closes)):
+        h_diff = highs[i] - highs[i-1]
+        l_diff = lows[i-1] - lows[i]
+        plus_dm.append(h_diff if h_diff > l_diff and h_diff > 0 else 0)
+        minus_dm.append(l_diff if l_diff > h_diff and l_diff > 0 else 0)
+        tr = max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1]))
+        trs.append(tr)
+
+    def wilder_smooth(data, p):
+        result = [sum(data[:p])]
+        for v in data[p:]:
+            result.append(result[-1] - result[-1] / p + v)
+        return result
+
+    atr_s    = wilder_smooth(trs, period)
+    plus_s   = wilder_smooth(plus_dm, period)
+    minus_s  = wilder_smooth(minus_dm, period)
+
+    dx_list = []
+    for a, p, m in zip(atr_s, plus_s, minus_s):
+        if a == 0:
+            continue
+        plus_di  = 100 * p / a
+        minus_di = 100 * m / a
+        denom = plus_di + minus_di
+        if denom == 0:
+            continue
+        dx_list.append(100 * abs(plus_di - minus_di) / denom)
+
+    if len(dx_list) < period:
+        return None
+
+    adx = sum(dx_list[-period:]) / period
+    return round(adx, 2)
 def calc_ema(prices, period=200):
     if len(prices) < period:
         return None
@@ -322,8 +362,9 @@ def analyze_timeframe(pair, interval):
     rsi = calc_rsi(closes)
     macd, signal = calc_macd(closes)
     atr = calc_atr(highs, lows, closes)
+    adx = calc_adx(highs, lows, closes)
 
-    if rsi is None or macd is None or atr is None:
+    if rsi is None or macd is None or atr is None or adx is None:
         return None
 
     current_price = closes[-1]
@@ -343,30 +384,34 @@ def analyze_timeframe(pair, interval):
     resistance_distance = abs(resistance - current_price)
     support_distance = abs(current_price - support)
 
-    # BUY — RSI اختياري (يتحسب ويرجع للـ reports)، MACD+EMA200+Trend إلزاميين
+    # BUY — RSI اختياري، MACD+EMA200+Trend+ADX إلزاميين
     if (
         macd > signal
         and current_price > ema200
         and trend == "UP"
+        and adx >= 25
     ):
         return {
             "direction": "BUY",
             "rsi": rsi,
+            "adx": adx,
             "atr": atr,
             "price": current_price,
             "ema200": ema200,
             "trend": trend
         }
 
-    # SELL — RSI اختياري، MACD+EMA200+Trend إلزاميين
+    # SELL — RSI اختياري، MACD+EMA200+Trend+ADX إلزاميين
     elif (
         macd < signal
         and current_price < ema200
         and trend == "DOWN"
+        and adx >= 25
     ):
         return {
             "direction": "SELL",
             "rsi": rsi,
+            "adx": adx,
             "atr": atr,
             "price": current_price,
             "ema200": ema200,
@@ -394,17 +439,24 @@ def analyze_pair(pair):
     main = list(results.values())[0]
     price = main["price"]
     atr = main["atr"]
+
+    # Minimum TP حسب نوع الزوج
+    is_jpy = pair.endswith("JPY") or pair.startswith("JPY")
+    min_tp = 0.180 if is_jpy else 0.00180   # JPY: 200 points، غيرها: 18 pips
+    max_tp = 18.0  if is_jpy else 0.00200   # JPY: 2000 points، غيرها: 20 pips
+
     if "BUY" in direction:
-        tp_distance = min(atr * 1.5, 0.00200)
-        sl_distance = max(tp_distance / 1.5, atr)
+        tp_distance = max(min(atr * 1.5, max_tp), min_tp)
+        sl_distance = tp_distance / 1.5      # RR = 1:1.5 دايما
+        rr = round(tp_distance / sl_distance, 2)
         tp = round(price + tp_distance, 6)
         sl = round(price - sl_distance, 6)
     else:
-        tp_distance = min(atr * 1.5, 0.00200)
-        sl_distance = max(tp_distance / 1.5, atr)
+        tp_distance = max(min(atr * 1.5, max_tp), min_tp)
+        sl_distance = tp_distance / 1.5
+        rr = round(tp_distance / sl_distance, 2)
         tp = round(price - tp_distance, 6)
         sl = round(price + sl_distance, 6)
-    rr = round(abs(tp - price) / abs(sl - price), 2)
     return {
         "pair": pair,
         "direction": direction,
@@ -588,6 +640,7 @@ def get_debug_report(pair):
         rsi    = calc_rsi(closes)
         macd, signal_val = calc_macd(closes)
         atr    = calc_atr(highs, lows, closes)
+        adx    = calc_adx(highs, lows, closes)
         ema200 = calc_ema(closes, 200)
         trend  = get_trend_structure(closes)
 
@@ -598,25 +651,27 @@ def get_debug_report(pair):
         current_price = closes[-1]
         macd_diff = round(macd - signal_val, 6)
 
-        # BUY checks — RSI دايما True (Optional)
+        # BUY checks — RSI دايما True (Optional)، ADX إلزامي
         buy_checks = {
             "RSI":   True,
             "MACD":  macd > signal_val,
             "EMA200": current_price > ema200,
             "Trend": trend == "UP",
+            "ADX":   (adx >= 25) if adx is not None else False,
         }
         buy_score = sum(buy_checks.values())
-        buy_ready = buy_score == 4
+        buy_ready = buy_score >= 4
 
-        # SELL checks — RSI دايما True (Optional)
+        # SELL checks — RSI دايما True (Optional)، ADX إلزامي
         sell_checks = {
             "RSI":   True,
             "MACD":  macd < signal_val,
             "EMA200": current_price < ema200,
             "Trend": trend == "DOWN",
+            "ADX":   (adx >= 25) if adx is not None else False,
         }
         sell_score = sum(sell_checks.values())
-        sell_ready = sell_score == 4
+        sell_ready = sell_score >= 4
 
         # ---------- BUY display ----------
         lines.append("\nBUY")
@@ -624,7 +679,8 @@ def get_debug_report(pair):
         lines.append(f"{'✅' if buy_checks['MACD'] else '❌'} MACD = {macd} | Signal = {signal_val} | Diff = {'+' if macd_diff >= 0 else ''}{macd_diff}")
         lines.append(f"{'✅' if buy_checks['EMA200'] else '❌'} EMA200 → Price = {round(current_price,6)} | EMA200 = {round(ema200,6)}")
         lines.append(f"{'✅' if buy_checks['Trend'] else '❌'} Trend = {trend}")
-        lines.append(f"Score: {buy_score}/4")
+        lines.append(f"{'✅' if buy_checks['ADX'] else '❌'} ADX = {adx if adx is not None else 'N/A'} (Required >= 25)")
+        lines.append(f"Score: {buy_score}/5")
 
         if buy_ready:
             buy_ready_count += 1
@@ -635,7 +691,8 @@ def get_debug_report(pair):
         lines.append(f"{'✅' if sell_checks['MACD'] else '❌'} MACD = {macd} | Signal = {signal_val} | Diff = {'+' if macd_diff >= 0 else ''}{macd_diff}")
         lines.append(f"{'✅' if sell_checks['EMA200'] else '❌'} EMA200 → Price = {round(current_price,6)} | EMA200 = {round(ema200,6)}")
         lines.append(f"{'✅' if sell_checks['Trend'] else '❌'} Trend = {trend}")
-        lines.append(f"Score: {sell_score}/4")
+        lines.append(f"{'✅' if sell_checks['ADX'] else '❌'} ADX = {adx if adx is not None else 'N/A'} (Required >= 25)")
+        lines.append(f"Score: {sell_score}/5")
 
         if sell_ready:
             sell_ready_count += 1
@@ -666,7 +723,9 @@ def main_loop():
     opportunities = pull_from_github()
     last_report_hour = -1
     already_warned = {}
-    last_signal = {}  # كيتذكر آخر إشارة مرسلة لكل pair: {"EUR/USD": "BUY"} — لمنع التكرار
+    last_signal = {}            # آخر اتجاه مرسل: {"USD/JPY": "BUY"}
+    last_signal_time = {}       # وقت آخر إرسال: {"USD/JPY": timestamp}
+    last_signal_valid = {}      # واش الشروط كانت true: {"USD/JPY": True/False}
 
     while True:
         now = datetime.now(timezone.utc)
@@ -773,16 +832,25 @@ def main_loop():
             if not waiting_confirmation:
                 for pair in PAIRS:
                     trade = analyze_pair(pair)
+                    current_direction = "BUY" if trade and "BUY" in trade["direction"] else ("SELL" if trade and "SELL" in trade["direction"] else None)
+                    conditions_valid = current_direction is not None
 
-                    # نظام منع تكرار الإشارة — إذا ماكانش trade، نريسيتو الحالة ديال الزوج
-                    if not trade:
+                    # Revalidation: إذا الشروط فشلت فالـ iteration السابقة، ريسيت last_signal
+                    if not conditions_valid:
+                        last_signal_valid[pair] = False
                         last_signal.pop(pair, None)
+                        last_signal_time.pop(pair, None)
                         continue
 
-                    # إذا نفس الاتجاه بحال آخر إشارة، ماتبعتش
-                    current_direction = "BUY" if "BUY" in trade["direction"] else "SELL"
-                    if last_signal.get(pair) == current_direction:
-                        continue
+                    # الشروط valid دابا — واش كانت فاشلة قبل؟
+                    was_invalid = not last_signal_valid.get(pair, True)
+                    last_signal_valid[pair] = True
+
+                    # بلوك الإرسال: نفس الاتجاه + (ماشي revalidated) + (60 دقيقة ما داوش)
+                    if last_signal.get(pair) == current_direction and not was_invalid:
+                        elapsed = time.time() - last_signal_time.get(pair, 0)
+                        if elapsed < 3600:  # 60 دقيقة
+                            continue
 
                     danger_news, warning_news = get_high_impact_news(pair)
 
@@ -856,6 +924,7 @@ def main_loop():
 
                     pending_trade = trade
                     last_signal[pair] = current_direction
+                    last_signal_time[pair] = time.time()
                     send_with_buttons(msg, trade)
                     break
 
