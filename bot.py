@@ -359,72 +359,78 @@ def analyze_timeframe(pair, interval):
 
     closes, highs, lows = result
 
-    rsi = calc_rsi(closes)
+    rsi   = calc_rsi(closes)
     macd, signal = calc_macd(closes)
-    atr = calc_atr(highs, lows, closes)
-    adx = calc_adx(highs, lows, closes)
+    atr   = calc_atr(highs, lows, closes)
+    adx   = calc_adx(highs, lows, closes)
 
-    if rsi is None or macd is None or atr is None or adx is None:
+    if macd is None or atr is None or adx is None:
         return None
 
     current_price = closes[-1]
-
-    # EMA200
     ema200 = calc_ema(closes, 200)
-
     if ema200 is None:
         return None
 
-    # Trend Structure
     trend = get_trend_structure(closes)
+    macd_diff = round(macd - signal, 6)
 
-    # Support / Resistance
-    support, resistance = get_support_resistance(highs, lows)
+    # BUY checks — RSI اختياري دايما True، MACD+EMA200+Trend+ADX إلزاميين
+    buy_checks = {
+        "RSI":    True,
+        "MACD":   macd > signal,
+        "EMA200": current_price > ema200,
+        "Trend":  trend == "UP",
+        "ADX":    adx >= 25,
+    }
+    buy_score = sum(buy_checks.values())
+    buy_ready = buy_score == 5   # RSI(True) + MACD + EMA200 + Trend + ADX كلهم خاصهم True
 
-    resistance_distance = abs(resistance - current_price)
-    support_distance = abs(current_price - support)
+    # SELL checks — نفس المنطق
+    sell_checks = {
+        "RSI":    True,
+        "MACD":   macd < signal,
+        "EMA200": current_price < ema200,
+        "Trend":  trend == "DOWN",
+        "ADX":    adx >= 25,
+    }
+    sell_score = sum(sell_checks.values())
+    sell_ready = sell_score == 5
 
-    # BUY — RSI اختياري، MACD+EMA200+Trend+ADX إلزاميين
-    if (
-        macd > signal
-        and current_price > ema200
-        and trend == "UP"
-        and adx >= 25
-    ):
+    if buy_ready:
         return {
-            "direction": "BUY",
-            "rsi": rsi,
-            "adx": adx,
-            "atr": atr,
-            "price": current_price,
-            "ema200": ema200,
-            "trend": trend
+            "direction":   "BUY",
+            "rsi": rsi, "adx": adx, "atr": atr,
+            "price": current_price, "ema200": ema200, "trend": trend,
+            "macd": macd, "signal": signal, "macd_diff": macd_diff,
+            "buy_checks":  buy_checks,  "buy_score":  buy_score,
+            "sell_checks": sell_checks, "sell_score": sell_score,
+        }
+    elif sell_ready:
+        return {
+            "direction":   "SELL",
+            "rsi": rsi, "adx": adx, "atr": atr,
+            "price": current_price, "ema200": ema200, "trend": trend,
+            "macd": macd, "signal": signal, "macd_diff": macd_diff,
+            "buy_checks":  buy_checks,  "buy_score":  buy_score,
+            "sell_checks": sell_checks, "sell_score": sell_score,
         }
 
-    # SELL — RSI اختياري، MACD+EMA200+Trend+ADX إلزاميين
-    elif (
-        macd < signal
-        and current_price < ema200
-        and trend == "DOWN"
-        and adx >= 25
-    ):
-        return {
-            "direction": "SELL",
-            "rsi": rsi,
-            "adx": adx,
-            "atr": atr,
-            "price": current_price,
-            "ema200": ema200,
-            "trend": trend
-        }
-
-    return None
+    # ماكانش signal — ولكن نرجع البيانات باش get_debug_report يقدر يعرضها
+    return {
+        "direction":   None,
+        "rsi": rsi, "adx": adx, "atr": atr,
+        "price": current_price, "ema200": ema200, "trend": trend,
+        "macd": macd, "signal": signal, "macd_diff": macd_diff,
+        "buy_checks":  buy_checks,  "buy_score":  buy_score,
+        "sell_checks": sell_checks, "sell_score": sell_score,
+    }
     
 def analyze_pair(pair):
     results = {}
     for tf in TIMEFRAMES:
         res = analyze_timeframe(pair, tf)
-        if res:
+        if res and res["direction"] is not None:
             results[tf] = res
     if len(results) < 2:
         return None
@@ -619,7 +625,7 @@ def run_server():
 
 
 def get_debug_report(pair):
-    """Debug report: RSI optional، MACD+EMA200+Trend إلزاميين، Score/4"""
+    """Debug report — يستعمل analyze_timeframe مباشرة، نفس الـ checks والـ logic"""
     lines = [f"🔍 {pair}"]
 
     REQUIRED_CONFIRMATIONS = 2
@@ -627,59 +633,40 @@ def get_debug_report(pair):
     sell_ready_count = 0
 
     for tf in TIMEFRAMES:
-        result = get_cached_data(pair, tf)
         tf_label = {"15min": "15min", "1h": "1H", "4h": "4H"}.get(tf, tf)
         lines.append(f"\n━━━━━━━━")
         lines.append(tf_label)
 
-        if not result:
+        tf_result = analyze_timeframe(pair, tf)
+
+        if tf_result is None:
             lines.append("⚠️ بيانات ناقصة")
             continue
 
-        closes, highs, lows = result
-        rsi    = calc_rsi(closes)
-        macd, signal_val = calc_macd(closes)
-        atr    = calc_atr(highs, lows, closes)
-        adx    = calc_adx(highs, lows, closes)
-        ema200 = calc_ema(closes, 200)
-        trend  = get_trend_structure(closes)
+        # نقرأ مباشرة من نتيجة analyze_timeframe — نفس الـ checks بالضبط
+        buy_checks  = tf_result["buy_checks"]
+        sell_checks = tf_result["sell_checks"]
+        buy_score   = tf_result["buy_score"]
+        sell_score  = tf_result["sell_score"]
+        buy_ready   = buy_score == 5
+        sell_ready  = sell_score == 5
 
-        if macd is None or ema200 is None or atr is None:
-            lines.append("⚠️ بيانات ناقصة")
-            continue
-
-        current_price = closes[-1]
-        macd_diff = round(macd - signal_val, 6)
-
-        # BUY checks — RSI دايما True (Optional)، ADX إلزامي
-        buy_checks = {
-            "RSI":   True,
-            "MACD":  macd > signal_val,
-            "EMA200": current_price > ema200,
-            "Trend": trend == "UP",
-            "ADX":   (adx >= 25) if adx is not None else False,
-        }
-        buy_score = sum(buy_checks.values())
-        buy_ready = buy_score >= 4
-
-        # SELL checks — RSI دايما True (Optional)، ADX إلزامي
-        sell_checks = {
-            "RSI":   True,
-            "MACD":  macd < signal_val,
-            "EMA200": current_price < ema200,
-            "Trend": trend == "DOWN",
-            "ADX":   (adx >= 25) if adx is not None else False,
-        }
-        sell_score = sum(sell_checks.values())
-        sell_ready = sell_score >= 4
+        rsi       = tf_result["rsi"]
+        macd      = tf_result["macd"]
+        signal_val= tf_result["signal"]
+        macd_diff = tf_result["macd_diff"]
+        ema200    = tf_result["ema200"]
+        price     = tf_result["price"]
+        trend     = tf_result["trend"]
+        adx       = tf_result["adx"]
 
         # ---------- BUY display ----------
         lines.append("\nBUY")
         lines.append(f"ℹ️ RSI = {rsi} (Optional)")
         lines.append(f"{'✅' if buy_checks['MACD'] else '❌'} MACD = {macd} | Signal = {signal_val} | Diff = {'+' if macd_diff >= 0 else ''}{macd_diff}")
-        lines.append(f"{'✅' if buy_checks['EMA200'] else '❌'} EMA200 → Price = {round(current_price,6)} | EMA200 = {round(ema200,6)}")
+        lines.append(f"{'✅' if buy_checks['EMA200'] else '❌'} EMA200 → Price = {round(price,6)} | EMA200 = {round(ema200,6)}")
         lines.append(f"{'✅' if buy_checks['Trend'] else '❌'} Trend = {trend}")
-        lines.append(f"{'✅' if buy_checks['ADX'] else '❌'} ADX = {adx if adx is not None else 'N/A'} (Required >= 25)")
+        lines.append(f"{'✅' if buy_checks['ADX'] else '❌'} ADX = {adx} (Required >= 25)")
         lines.append(f"Score: {buy_score}/5")
 
         if buy_ready:
@@ -689,9 +676,9 @@ def get_debug_report(pair):
         lines.append("\nSELL")
         lines.append(f"ℹ️ RSI = {rsi} (Optional)")
         lines.append(f"{'✅' if sell_checks['MACD'] else '❌'} MACD = {macd} | Signal = {signal_val} | Diff = {'+' if macd_diff >= 0 else ''}{macd_diff}")
-        lines.append(f"{'✅' if sell_checks['EMA200'] else '❌'} EMA200 → Price = {round(current_price,6)} | EMA200 = {round(ema200,6)}")
+        lines.append(f"{'✅' if sell_checks['EMA200'] else '❌'} EMA200 → Price = {round(price,6)} | EMA200 = {round(ema200,6)}")
         lines.append(f"{'✅' if sell_checks['Trend'] else '❌'} Trend = {trend}")
-        lines.append(f"{'✅' if sell_checks['ADX'] else '❌'} ADX = {adx if adx is not None else 'N/A'} (Required >= 25)")
+        lines.append(f"{'✅' if sell_checks['ADX'] else '❌'} ADX = {adx} (Required >= 25)")
         lines.append(f"Score: {sell_score}/5")
 
         if sell_ready:
