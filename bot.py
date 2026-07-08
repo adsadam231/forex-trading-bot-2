@@ -343,13 +343,11 @@ def analyze_timeframe(pair, interval):
     resistance_distance = abs(resistance - current_price)
     support_distance = abs(current_price - support)
 
-    # BUY
+    # BUY — RSI اختياري (يتحسب ويرجع للـ reports)، MACD+EMA200+Trend إلزاميين
     if (
-        rsi < 40
-        and macd > signal
+        macd > signal
         and current_price > ema200
         and trend == "UP"
-        and resistance_distance > atr * 0.5
     ):
         return {
             "direction": "BUY",
@@ -360,13 +358,11 @@ def analyze_timeframe(pair, interval):
             "trend": trend
         }
 
-    # SELL
+    # SELL — RSI اختياري، MACD+EMA200+Trend إلزاميين
     elif (
-        rsi > 60
-        and macd < signal
+        macd < signal
         and current_price < ema200
         and trend == "DOWN"
-        and support_distance > atr * 0.5
     ):
         return {
             "direction": "SELL",
@@ -399,11 +395,15 @@ def analyze_pair(pair):
     price = main["price"]
     atr = main["atr"]
     if "BUY" in direction:
-        tp = round(price + atr * 1.5, 6)
-        sl = round(price - atr, 6)
+        tp_distance = min(atr * 1.5, 0.00200)
+        sl_distance = tp_distance / 1.5
+        tp = round(price + tp_distance, 6)
+        sl = round(price - sl_distance, 6)
     else:
-        tp = round(price - atr * 1.5, 6)
-        sl = round(price + atr, 6)
+        tp_distance = min(atr * 1.5, 0.00200)
+        sl_distance = tp_distance / 1.5
+        tp = round(price - tp_distance, 6)
+        sl = round(price + sl_distance, 6)
     rr = round(abs(tp - price) / abs(sl - price), 2)
     return {
         "pair": pair,
@@ -567,14 +567,13 @@ def run_server():
 
 
 def send_hourly_report(pairs_status):
-    """كيبعت تقرير كل ساعة عن حالة السوق"""
+    """كيبعت تقرير كل ساعة عن حالة السوق مع حالة كل شرط لكل timeframe"""
     now_str = datetime.now(timezone.utc).strftime("%H:%M UTC")
     msg = f"🕐 <b>تقرير السوق — {now_str}</b>\n━━━━━━━━━━━━━━━━\n"
 
     for pair, status in pairs_status.items():
         market = status.get("market")
-        rsi_15 = status.get("rsi_15")
-        reason = status.get("reason")
+        tf_details = status.get("tf_details", {})
 
         if market:
             msg += (
@@ -585,11 +584,47 @@ def send_hourly_report(pairs_status):
         else:
             msg += f"\n💱 <b>{pair}</b>\n"
 
-        if rsi_15:
-            msg += f"  📊 RSI(15min): {rsi_15}\n"
+        # حالة كل timeframe
+        missing_conditions = []
+        any_ready = False
 
-        if reason:
-            msg += f"  🔍 {reason}\n"
+        for tf, tfd in tf_details.items():
+            tf_label = {"15min": "15min", "1h": "1H", "4h": "4H"}.get(tf, tf)
+            msg += f"  <b>{tf_label}:</b>\n"
+
+            if tfd is None:
+                msg += f"    ⚠️ بيانات ناقصة\n"
+                continue
+
+            rsi_val = tfd.get("rsi")
+            macd_ok = tfd.get("macd_ok")
+            ema_ok = tfd.get("ema_ok")
+            trend_val = tfd.get("trend")
+            direction = tfd.get("direction")
+
+            rsi_str = f"{rsi_val}" if rsi_val is not None else "N/A"
+            msg += f"    ℹ️ RSI = {rsi_str} (Optional)\n"
+            msg += f"    {'✅' if macd_ok else '❌'} MACD\n"
+            msg += f"    {'✅' if ema_ok else '❌'} EMA200\n"
+            msg += f"    {'✅' if trend_val in ['UP', 'DOWN'] and direction == trend_val else '❌'} Trend = {trend_val}\n"
+
+            if not macd_ok:
+                missing_conditions.append(f"MACD ({tf_label})")
+            if not ema_ok:
+                missing_conditions.append(f"EMA200 ({tf_label})")
+            if not (trend_val in ['UP', 'DOWN'] and direction == trend_val):
+                missing_conditions.append(f"Trend ({tf_label})")
+
+            if direction:
+                any_ready = True
+
+        # خلاصة الزوج
+        if missing_conditions:
+            msg += f"  ❌ Missing Conditions:\n"
+            for mc in missing_conditions[:6]:
+                msg += f"    • {mc}\n"
+
+        msg += f"  {'✅ Trade Ready' if any_ready else '❌ No Trade'}\n"
 
     # أخبار اليوم
     all_news = []
@@ -614,7 +649,8 @@ def main_loop():
 
     opportunities = pull_from_github()
     last_report_hour = -1
-    already_warned = {}  # كيتذكر واش بعت تحذير لكل زوج
+    already_warned = {}
+    last_signal = {}  # كيتذكر آخر إشارة مرسلة لكل pair: {"EUR/USD": "BUY"} — لمنع التكرار
 
     while True:
         now = datetime.now(timezone.utc)
@@ -657,19 +693,41 @@ def main_loop():
                 pairs_status = {}
                 for pair in PAIRS:
                     market = get_market_summary(pair)
-                    rsi_data = None
-                    reason = None
-                    result = get_cached_data(pair, "15min")
-                    if result:
-                        rsi_data = calc_rsi(result[0])
-                        if rsi_data:
-                            if 40 <= rsi_data <= 60:
-                                reason = f"RSI = {rsi_data} — السوق محايد، مراقب..."
-                            elif rsi_data < 40:
-                                reason = f"RSI = {rsi_data} — قريب من منطقة BUY، مراقب MACD..."
-                            else:
-                                reason = f"RSI = {rsi_data} — قريب من منطقة SELL، مراقب MACD..."
-                    pairs_status[pair] = {"market": market, "rsi_15": rsi_data, "reason": reason}
+                    tf_details = {}
+                    for tf in TIMEFRAMES:
+                        result = get_cached_data(pair, tf)
+                        if not result:
+                            tf_details[tf] = None
+                            continue
+                        closes, highs, lows = result
+                        rsi = calc_rsi(closes)
+                        macd, signal_val = calc_macd(closes)
+                        ema200 = calc_ema(closes, 200)
+                        trend = get_trend_structure(closes)
+                        price = closes[-1] if closes else None
+                        macd_ok_buy = macd > signal_val if macd is not None and signal_val is not None else False
+                        macd_ok_sell = macd < signal_val if macd is not None and signal_val is not None else False
+                        ema_ok_buy = price > ema200 if price and ema200 else False
+                        ema_ok_sell = price < ema200 if price and ema200 else False
+                        # نشوف أي اتجاه أقرب
+                        if trend == "UP":
+                            direction = "UP"
+                            tf_details[tf] = {
+                                "rsi": rsi, "macd_ok": macd_ok_buy,
+                                "ema_ok": ema_ok_buy, "trend": trend, "direction": "UP"
+                            }
+                        elif trend == "DOWN":
+                            direction = "DOWN"
+                            tf_details[tf] = {
+                                "rsi": rsi, "macd_ok": macd_ok_sell,
+                                "ema_ok": ema_ok_sell, "trend": trend, "direction": "DOWN"
+                            }
+                        else:
+                            tf_details[tf] = {
+                                "rsi": rsi, "macd_ok": False,
+                                "ema_ok": False, "trend": trend, "direction": None
+                            }
+                    pairs_status[pair] = {"market": market, "tf_details": tf_details}
                 send_hourly_report(pairs_status)
 
             # تحذير مسبق 15 دقيقة قبل الإشارة
@@ -699,7 +757,15 @@ def main_loop():
             if not waiting_confirmation:
                 for pair in PAIRS:
                     trade = analyze_pair(pair)
+
+                    # نظام منع تكرار الإشارة — إذا ماكانش trade، نريسيتو الحالة ديال الزوج
                     if not trade:
+                        last_signal.pop(pair, None)
+                        continue
+
+                    # إذا نفس الاتجاه بحال آخر إشارة، ماتبعتش
+                    current_direction = "BUY" if "BUY" in trade["direction"] else "SELL"
+                    if last_signal.get(pair) == current_direction:
                         continue
 
                     danger_news, warning_news = get_high_impact_news(pair)
@@ -773,6 +839,7 @@ def main_loop():
                     )
 
                     pending_trade = trade
+                    last_signal[pair] = current_direction
                     send_with_buttons(msg, trade)
                     break
 
