@@ -278,45 +278,6 @@ def calc_atr(highs, lows, closes, period=14):
         return None
     return round(sum(trs[-period:]) / period, 6)
 
-def calc_adx(highs, lows, closes, period=14):
-    """كيحسب ADX(14) — كيقيس قوة الاتجاه بغض النظر عن الاتجاه"""
-    if len(closes) < period * 2 + 1:
-        return None
-    plus_dm, minus_dm, trs = [], [], []
-    for i in range(1, len(closes)):
-        h_diff = highs[i] - highs[i-1]
-        l_diff = lows[i-1] - lows[i]
-        plus_dm.append(h_diff if h_diff > l_diff and h_diff > 0 else 0)
-        minus_dm.append(l_diff if l_diff > h_diff and l_diff > 0 else 0)
-        tr = max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1]))
-        trs.append(tr)
-
-    def wilder_smooth(data, p):
-        result = [sum(data[:p])]
-        for v in data[p:]:
-            result.append(result[-1] - result[-1] / p + v)
-        return result
-
-    atr_s    = wilder_smooth(trs, period)
-    plus_s   = wilder_smooth(plus_dm, period)
-    minus_s  = wilder_smooth(minus_dm, period)
-
-    dx_list = []
-    for a, p, m in zip(atr_s, plus_s, minus_s):
-        if a == 0:
-            continue
-        plus_di  = 100 * p / a
-        minus_di = 100 * m / a
-        denom = plus_di + minus_di
-        if denom == 0:
-            continue
-        dx_list.append(100 * abs(plus_di - minus_di) / denom)
-
-    if len(dx_list) < period:
-        return None
-
-    adx = sum(dx_list[-period:]) / period
-    return round(adx, 2)
 def calc_ema(prices, period=200):
     if len(prices) < period:
         return None
@@ -362,9 +323,8 @@ def analyze_timeframe(pair, interval):
     rsi   = calc_rsi(closes)
     macd, signal = calc_macd(closes)
     atr   = calc_atr(highs, lows, closes)
-    adx   = calc_adx(highs, lows, closes)
 
-    if macd is None or atr is None or adx is None:
+    if macd is None or atr is None:
         return None
 
     current_price = closes[-1]
@@ -375,56 +335,39 @@ def analyze_timeframe(pair, interval):
     trend = get_trend_structure(closes)
     macd_diff = round(macd - signal, 6)
 
-    # BUY checks — RSI اختياري دايما True، MACD+EMA200+Trend+ADX إلزاميين
+    # BUY checks — RSI اختياري دايما True، MACD+EMA200+Trend إلزاميين
     buy_checks = {
         "RSI":    True,
         "MACD":   macd > signal,
         "EMA200": current_price > ema200,
         "Trend":  trend == "UP",
-        "ADX":    adx >= 25,
     }
     buy_score = sum(buy_checks.values())
-    buy_ready = buy_score == 5   # RSI(True) + MACD + EMA200 + Trend + ADX كلهم خاصهم True
+    buy_ready = buy_score == 4   # RSI(True) + MACD + EMA200 + Trend
 
-    # SELL checks — نفس المنطق
+    # SELL checks
     sell_checks = {
         "RSI":    True,
         "MACD":   macd < signal,
         "EMA200": current_price < ema200,
         "Trend":  trend == "DOWN",
-        "ADX":    adx >= 25,
     }
     sell_score = sum(sell_checks.values())
-    sell_ready = sell_score == 5
+    sell_ready = sell_score == 4
 
-    if buy_ready:
-        return {
-            "direction":   "BUY",
-            "rsi": rsi, "adx": adx, "atr": atr,
-            "price": current_price, "ema200": ema200, "trend": trend,
-            "macd": macd, "signal": signal, "macd_diff": macd_diff,
-            "buy_checks":  buy_checks,  "buy_score":  buy_score,
-            "sell_checks": sell_checks, "sell_score": sell_score,
-        }
-    elif sell_ready:
-        return {
-            "direction":   "SELL",
-            "rsi": rsi, "adx": adx, "atr": atr,
-            "price": current_price, "ema200": ema200, "trend": trend,
-            "macd": macd, "signal": signal, "macd_diff": macd_diff,
-            "buy_checks":  buy_checks,  "buy_score":  buy_score,
-            "sell_checks": sell_checks, "sell_score": sell_score,
-        }
-
-    # ماكانش signal — ولكن نرجع البيانات باش get_debug_report يقدر يعرضها
-    return {
-        "direction":   None,
-        "rsi": rsi, "adx": adx, "atr": atr,
+    base = {
+        "rsi": rsi, "atr": atr,
         "price": current_price, "ema200": ema200, "trend": trend,
         "macd": macd, "signal": signal, "macd_diff": macd_diff,
-        "buy_checks":  buy_checks,  "buy_score":  buy_score,
+        "buy_checks": buy_checks, "buy_score": buy_score,
         "sell_checks": sell_checks, "sell_score": sell_score,
     }
+
+    if buy_ready:
+        return {**base, "direction": "BUY"}
+    elif sell_ready:
+        return {**base, "direction": "SELL"}
+    return {**base, "direction": None}
     
 def analyze_pair(pair):
     results = {}
@@ -648,8 +591,8 @@ def get_debug_report(pair):
         sell_checks = tf_result["sell_checks"]
         buy_score   = tf_result["buy_score"]
         sell_score  = tf_result["sell_score"]
-        buy_ready   = buy_score == 5
-        sell_ready  = sell_score == 5
+        buy_ready   = buy_score == 4
+        sell_ready  = sell_score == 4
 
         rsi       = tf_result["rsi"]
         macd      = tf_result["macd"]
@@ -658,7 +601,6 @@ def get_debug_report(pair):
         ema200    = tf_result["ema200"]
         price     = tf_result["price"]
         trend     = tf_result["trend"]
-        adx       = tf_result["adx"]
 
         # ---------- BUY display ----------
         lines.append("\nBUY")
@@ -666,8 +608,7 @@ def get_debug_report(pair):
         lines.append(f"{'✅' if buy_checks['MACD'] else '❌'} MACD = {macd} | Signal = {signal_val} | Diff = {'+' if macd_diff >= 0 else ''}{macd_diff}")
         lines.append(f"{'✅' if buy_checks['EMA200'] else '❌'} EMA200 → Price = {round(price,6)} | EMA200 = {round(ema200,6)}")
         lines.append(f"{'✅' if buy_checks['Trend'] else '❌'} Trend = {trend}")
-        lines.append(f"{'✅' if buy_checks['ADX'] else '❌'} ADX = {adx} (Required >= 25)")
-        lines.append(f"Score: {buy_score}/5")
+        lines.append(f"Score: {buy_score}/4")
 
         if buy_ready:
             buy_ready_count += 1
@@ -678,8 +619,7 @@ def get_debug_report(pair):
         lines.append(f"{'✅' if sell_checks['MACD'] else '❌'} MACD = {macd} | Signal = {signal_val} | Diff = {'+' if macd_diff >= 0 else ''}{macd_diff}")
         lines.append(f"{'✅' if sell_checks['EMA200'] else '❌'} EMA200 → Price = {round(price,6)} | EMA200 = {round(ema200,6)}")
         lines.append(f"{'✅' if sell_checks['Trend'] else '❌'} Trend = {trend}")
-        lines.append(f"{'✅' if sell_checks['ADX'] else '❌'} ADX = {adx} (Required >= 25)")
-        lines.append(f"Score: {sell_score}/5")
+        lines.append(f"Score: {sell_score}/4")
 
         if sell_ready:
             sell_ready_count += 1
