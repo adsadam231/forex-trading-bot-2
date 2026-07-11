@@ -277,7 +277,6 @@ def calc_atr(highs, lows, closes, period=14):
     if len(trs) < period:
         return None
     return round(sum(trs[-period:]) / period, 6)
-
 def calc_ema(prices, period=200):
     if len(prices) < period:
         return None
@@ -320,19 +319,29 @@ def analyze_timeframe(pair, interval):
 
     closes, highs, lows = result
 
-    rsi   = calc_rsi(closes)
+    rsi = calc_rsi(closes)
     macd, signal = calc_macd(closes)
-    atr   = calc_atr(highs, lows, closes)
+    atr = calc_atr(highs, lows, closes)
 
-    if macd is None or atr is None:
+    if rsi is None or macd is None or atr is None:
         return None
 
     current_price = closes[-1]
+
+    # EMA200
     ema200 = calc_ema(closes, 200)
+
     if ema200 is None:
         return None
 
+    # Trend Structure
     trend = get_trend_structure(closes)
+
+    # Support / Resistance
+    support, resistance = get_support_resistance(highs, lows)
+    distance_to_resistance = abs(resistance - current_price)
+    distance_to_support    = abs(current_price - support)
+    sr_threshold = round(atr * 1.2, 6)
     macd_diff = round(macd - signal, 6)
 
     # BUY checks — RSI اختياري دايما True، MACD+EMA200+Trend إلزاميين
@@ -343,7 +352,8 @@ def analyze_timeframe(pair, interval):
         "Trend":  trend == "UP",
     }
     buy_score = sum(buy_checks.values())
-    buy_ready = buy_score == 4   # RSI(True) + MACD + EMA200 + Trend
+    buy_sr_ok = distance_to_resistance > sr_threshold   # فلتر حماية — ماشي فالـ score
+    buy_ready = buy_score == 4 and buy_sr_ok
 
     # SELL checks
     sell_checks = {
@@ -353,12 +363,18 @@ def analyze_timeframe(pair, interval):
         "Trend":  trend == "DOWN",
     }
     sell_score = sum(sell_checks.values())
-    sell_ready = sell_score == 4
+    sell_sr_ok = distance_to_support > sr_threshold     # فلتر حماية — ماشي فالـ score
+    sell_ready = sell_score == 4 and sell_sr_ok
 
     base = {
         "rsi": rsi, "atr": atr,
         "price": current_price, "ema200": ema200, "trend": trend,
         "macd": macd, "signal": signal, "macd_diff": macd_diff,
+        "support": support, "resistance": resistance,
+        "distance_to_support": distance_to_support,
+        "distance_to_resistance": distance_to_resistance,
+        "sr_threshold": sr_threshold,
+        "buy_sr_ok": buy_sr_ok, "sell_sr_ok": sell_sr_ok,
         "buy_checks": buy_checks, "buy_score": buy_score,
         "sell_checks": sell_checks, "sell_score": sell_score,
     }
@@ -388,24 +404,13 @@ def analyze_pair(pair):
     main = list(results.values())[0]
     price = main["price"]
     atr = main["atr"]
-
-    # Minimum TP حسب نوع الزوج
-    is_jpy = pair.endswith("JPY") or pair.startswith("JPY")
-    min_tp = 0.180 if is_jpy else 0.00180   # JPY: 200 points، غيرها: 18 pips
-    max_tp = 18.0  if is_jpy else 0.00200   # JPY: 2000 points، غيرها: 20 pips
-
     if "BUY" in direction:
-        tp_distance = max(min(atr * 1.5, max_tp), min_tp)
-        sl_distance = tp_distance / 1.5      # RR = 1:1.5 دايما
-        rr = round(tp_distance / sl_distance, 2)
-        tp = round(price + tp_distance, 6)
-        sl = round(price - sl_distance, 6)
+        tp = round(price + atr * 1.5, 6)
+        sl = round(price - atr, 6)
     else:
-        tp_distance = max(min(atr * 1.5, max_tp), min_tp)
-        sl_distance = tp_distance / 1.5
-        rr = round(tp_distance / sl_distance, 2)
-        tp = round(price - tp_distance, 6)
-        sl = round(price + sl_distance, 6)
+        tp = round(price - atr * 1.5, 6)
+        sl = round(price + atr, 6)
+    rr = round(abs(tp - price) / abs(sl - price), 2)
     return {
         "pair": pair,
         "direction": direction,
@@ -586,45 +591,49 @@ def get_debug_report(pair):
             lines.append("⚠️ بيانات ناقصة")
             continue
 
-        # نقرأ مباشرة من نتيجة analyze_timeframe — نفس الـ checks بالضبط
         buy_checks  = tf_result["buy_checks"]
         sell_checks = tf_result["sell_checks"]
         buy_score   = tf_result["buy_score"]
         sell_score  = tf_result["sell_score"]
-        buy_ready   = buy_score == 4
-        sell_ready  = sell_score == 4
+        buy_ready   = buy_score == 4 and tf_result["buy_sr_ok"]
+        sell_ready  = sell_score == 4 and tf_result["sell_sr_ok"]
 
-        rsi       = tf_result["rsi"]
-        macd      = tf_result["macd"]
-        signal_val= tf_result["signal"]
-        macd_diff = tf_result["macd_diff"]
-        ema200    = tf_result["ema200"]
-        price     = tf_result["price"]
-        trend     = tf_result["trend"]
+        rsi         = tf_result["rsi"]
+        macd        = tf_result["macd"]
+        signal_val  = tf_result["signal"]
+        macd_diff   = tf_result["macd_diff"]
+        ema200      = tf_result["ema200"]
+        price       = tf_result["price"]
+        trend       = tf_result["trend"]
+        atr         = tf_result["atr"]
+        d_resist    = round(tf_result["distance_to_resistance"], 6)
+        d_support   = round(tf_result["distance_to_support"], 6)
+        threshold   = tf_result["sr_threshold"]
 
-        # ---------- BUY display ----------
+        # ---------- BUY ----------
         lines.append("\nBUY")
         lines.append(f"ℹ️ RSI = {rsi} (Optional)")
         lines.append(f"{'✅' if buy_checks['MACD'] else '❌'} MACD = {macd} | Signal = {signal_val} | Diff = {'+' if macd_diff >= 0 else ''}{macd_diff}")
         lines.append(f"{'✅' if buy_checks['EMA200'] else '❌'} EMA200 → Price = {round(price,6)} | EMA200 = {round(ema200,6)}")
         lines.append(f"{'✅' if buy_checks['Trend'] else '❌'} Trend = {trend}")
         lines.append(f"Score: {buy_score}/4")
+        lines.append(f"{'✅' if tf_result['buy_sr_ok'] else '❌'} SR Filter → Resistance Dist = {d_resist} | Required > {threshold}")
 
         if buy_ready:
             buy_ready_count += 1
 
-        # ---------- SELL display ----------
+        # ---------- SELL ----------
         lines.append("\nSELL")
         lines.append(f"ℹ️ RSI = {rsi} (Optional)")
         lines.append(f"{'✅' if sell_checks['MACD'] else '❌'} MACD = {macd} | Signal = {signal_val} | Diff = {'+' if macd_diff >= 0 else ''}{macd_diff}")
         lines.append(f"{'✅' if sell_checks['EMA200'] else '❌'} EMA200 → Price = {round(price,6)} | EMA200 = {round(ema200,6)}")
         lines.append(f"{'✅' if sell_checks['Trend'] else '❌'} Trend = {trend}")
         lines.append(f"Score: {sell_score}/4")
+        lines.append(f"{'✅' if tf_result['sell_sr_ok'] else '❌'} SR Filter → Support Dist = {d_support} | Required > {threshold}")
 
         if sell_ready:
             sell_ready_count += 1
 
-    # ---------- خلاصة ----------
     trade_ready = (
         buy_ready_count  >= REQUIRED_CONFIRMATIONS or
         sell_ready_count >= REQUIRED_CONFIRMATIONS
@@ -649,10 +658,7 @@ def main_loop():
 
     opportunities = pull_from_github()
     last_report_hour = -1
-    already_warned = {}
-    last_signal = {}            # آخر اتجاه مرسل: {"USD/JPY": "BUY"}
-    last_signal_time = {}       # وقت آخر إرسال: {"USD/JPY": timestamp}
-    last_signal_valid = {}      # واش الشروط كانت true: {"USD/JPY": True/False}
+    already_warned = {}  # كيتذكر واش بعت تحذير لكل زوج
 
     while True:
         now = datetime.now(timezone.utc)
@@ -692,44 +698,7 @@ def main_loop():
             # تقرير كل ساعة
             if now.hour != last_report_hour and now.minute < 15 and not waiting_confirmation:
                 last_report_hour = now.hour
-                pairs_status = {}
-                for pair in PAIRS:
-                    market = get_market_summary(pair)
-                    tf_details = {}
-                    for tf in TIMEFRAMES:
-                        result = get_cached_data(pair, tf)
-                        if not result:
-                            tf_details[tf] = None
-                            continue
-                        closes, highs, lows = result
-                        rsi = calc_rsi(closes)
-                        macd, signal_val = calc_macd(closes)
-                        ema200 = calc_ema(closes, 200)
-                        trend = get_trend_structure(closes)
-                        price = closes[-1] if closes else None
-                        macd_ok_buy = macd > signal_val if macd is not None and signal_val is not None else False
-                        macd_ok_sell = macd < signal_val if macd is not None and signal_val is not None else False
-                        ema_ok_buy = price > ema200 if price and ema200 else False
-                        ema_ok_sell = price < ema200 if price and ema200 else False
-                        # نشوف أي اتجاه أقرب
-                        if trend == "UP":
-                            direction = "UP"
-                            tf_details[tf] = {
-                                "rsi": rsi, "macd_ok": macd_ok_buy,
-                                "ema_ok": ema_ok_buy, "trend": trend, "direction": "UP"
-                            }
-                        elif trend == "DOWN":
-                            direction = "DOWN"
-                            tf_details[tf] = {
-                                "rsi": rsi, "macd_ok": macd_ok_sell,
-                                "ema_ok": ema_ok_sell, "trend": trend, "direction": "DOWN"
-                            }
-                        else:
-                            tf_details[tf] = {
-                                "rsi": rsi, "macd_ok": False,
-                                "ema_ok": False, "trend": trend, "direction": None
-                            }
-                    pairs_status[pair] = {"market": market, "tf_details": tf_details}
+                pairs_status = {pair: {} for pair in PAIRS}
                 send_hourly_report(pairs_status)
 
             # تحذير مسبق 15 دقيقة قبل الإشارة
@@ -759,25 +728,8 @@ def main_loop():
             if not waiting_confirmation:
                 for pair in PAIRS:
                     trade = analyze_pair(pair)
-                    current_direction = "BUY" if trade and "BUY" in trade["direction"] else ("SELL" if trade and "SELL" in trade["direction"] else None)
-                    conditions_valid = current_direction is not None
-
-                    # Revalidation: إذا الشروط فشلت فالـ iteration السابقة، ريسيت last_signal
-                    if not conditions_valid:
-                        last_signal_valid[pair] = False
-                        last_signal.pop(pair, None)
-                        last_signal_time.pop(pair, None)
+                    if not trade:
                         continue
-
-                    # الشروط valid دابا — واش كانت فاشلة قبل؟
-                    was_invalid = not last_signal_valid.get(pair, True)
-                    last_signal_valid[pair] = True
-
-                    # بلوك الإرسال: نفس الاتجاه + (ماشي revalidated) + (60 دقيقة ما داوش)
-                    if last_signal.get(pair) == current_direction and not was_invalid:
-                        elapsed = time.time() - last_signal_time.get(pair, 0)
-                        if elapsed < 3600:  # 60 دقيقة
-                            continue
 
                     danger_news, warning_news = get_high_impact_news(pair)
 
@@ -850,8 +802,6 @@ def main_loop():
                     )
 
                     pending_trade = trade
-                    last_signal[pair] = current_direction
-                    last_signal_time[pair] = time.time()
                     send_with_buttons(msg, trade)
                     break
 
