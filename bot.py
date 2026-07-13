@@ -409,7 +409,7 @@ def analyze_pair(pair):
         is_jpy = pair.endswith("JPY") or pair.startswith("JPY")
         min_tp = 1.80 if is_jpy else 0.00180
         max_tp = 2.20 if is_jpy else 0.00220
-        tp_distance = max(min(atr * 1.5, max_tp), min_tp)
+        tp_distance = min(atr * 1.5, max_tp)
         sl_distance = tp_distance / 1.5
         rr = round(tp_distance / sl_distance, 2)
         if is_jpy:
@@ -422,7 +422,7 @@ def analyze_pair(pair):
         is_jpy = pair.endswith("JPY") or pair.startswith("JPY")
         min_tp = 1.80 if is_jpy else 0.00180
         max_tp = 2.20 if is_jpy else 0.00220
-        tp_distance = max(min(atr * 1.5, max_tp), min_tp)
+        tp_distance = min(atr * 1.5, max_tp)
         sl_distance = tp_distance / 1.5
         rr = round(tp_distance / sl_distance, 2)
         if is_jpy:
