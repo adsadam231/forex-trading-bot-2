@@ -23,9 +23,9 @@ PAIR_CURRENCIES = {
     "AUD/USD": ["AUD", "USD"],
 }
 
-# حالة التريد المنتظر للتأكيد
-pending_trade = {}
-waiting_confirmation = False
+# حالة التريدات المنتظرة للتأكيد — dict بالـ pair كـ key
+pending_trades = {}        # {"USD/JPY": trade_dict, ...}
+waiting_confirmation = {}  # {"USD/JPY": True/False, ...}
 
 
 # Cache ديال البيانات باش ما نطلبوش أكثر من مرة
@@ -57,10 +57,11 @@ def send_telegram(msg, reply_markup=None):
     requests.post(url, json=payload)
 
 def send_with_buttons(msg, trade):
+    pair_key = trade["pair"].replace("/", "")  # "USD/JPY" → "USDJPY"
     keyboard = {
         "inline_keyboard": [[
-            {"text": "✅ نعم، دخلها!", "callback_data": "yes"},
-            {"text": "❌ لا، تجاوزها", "callback_data": "no"}
+            {"text": "✅ نعم، دخلها!", "callback_data": f"yes_{pair_key}"},
+            {"text": "❌ لا، تجاوزها", "callback_data": f"no_{pair_key}"}
         ]]
     }
     send_telegram(msg, reply_markup=keyboard)
@@ -475,15 +476,15 @@ def push_to_github(opportunities):
     requests.put(url, headers=headers, json=payload)
 
 def monitor_trade(trade):
-    global waiting_confirmation, pending_trade
-    now_str = datetime.now(timezone.utc).strftime("%H:%M UTC")
+    global waiting_confirmation, pending_trades
+    pair = trade["pair"]
 
     for i in range(3):
         time.sleep(600)  # كل 10 دقائق
-        if not waiting_confirmation:
+        if not waiting_confirmation.get(pair):
             return
 
-        result = get_price_data(trade["pair"])
+        result = get_price_data(pair)
         if not result:
             continue
         closes, _, _ = result
@@ -496,7 +497,7 @@ def monitor_trade(trade):
 
         remaining = 20 - (i + 1) * 10
         send_telegram(
-            f"🔄 <b>تحديث — {trade['pair']}</b>\n"
+            f"🔄 <b>تحديث — {pair}</b>\n"
             f"━━━━━━━━━━━━━━━━\n"
             f"{progress}\n"
             f"💰 السعر دابا: <b>{current_price}</b>\n"
@@ -504,11 +505,11 @@ def monitor_trade(trade):
             f"🕐 {datetime.now(timezone.utc).strftime('%H:%M UTC')}"
         )
 
-    if waiting_confirmation:
-        result = get_price_data(trade["pair"])
+    if waiting_confirmation.get(pair):
+        result = get_price_data(pair)
         current_price = result[0][-1] if result else trade["price"]
         send_telegram(
-            f"🎯 <b>وقت الدخول — {trade['pair']}</b>\n"
+            f"🎯 <b>وقت الدخول — {pair}</b>\n"
             f"━━━━━━━━━━━━━━━━\n"
             f"الإشارة باقية قوية ✅\n"
             f"💰 السعر دابا: <b>{current_price}</b>\n"
@@ -518,8 +519,8 @@ def monitor_trade(trade):
             f"واش واجد تدخل؟ 🚀\n"
             f"🕐 {datetime.now(timezone.utc).strftime('%H:%M UTC')}"
         )
-    waiting_confirmation = False
-    pending_trade = {}
+    waiting_confirmation[pair] = False
+    pending_trades.pop(pair, None)
 
 class WebhookHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -528,7 +529,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"Bot is running!")
 
     def do_POST(self):
-        global waiting_confirmation, pending_trade
+        global waiting_confirmation, pending_trades
         content_length = int(self.headers['Content-Length'])
         body = self.rfile.read(content_length)
         self.send_response(200)
@@ -542,9 +543,17 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 data = cb.get("data", "")
                 answer_callback(cb["id"])
 
-                if data == "yes" and pending_trade:
-                    waiting_confirmation = True
-                    trade = pending_trade.copy()
+                # استخراج الأمر والزوج من callback_data (مثلا: "yes_USDJPY")
+                if "_" in data:
+                    action, pair_key = data.split("_", 1)
+                    # نرجع الزوج الأصلي من pending_trades
+                    pair = next((p for p in pending_trades if p.replace("/", "") == pair_key), None)
+                else:
+                    action, pair = data, None
+
+                if action == "yes" and pair and pair in pending_trades:
+                    waiting_confirmation[pair] = True
+                    trade = pending_trades[pair].copy()
                     send_telegram(
                         f"✅ <b>واخا! غادي نراقب التريد 30 دقيقة</b>\n"
                         f"━━━━━━━━━━━━━━━━\n"
@@ -555,9 +564,9 @@ class WebhookHandler(BaseHTTPRequestHandler):
                     t.daemon = True
                     t.start()
 
-                elif data == "no":
-                    pending_trade = {}
-                    waiting_confirmation = False
+                elif action == "no" and pair:
+                    pending_trades.pop(pair, None)
+                    waiting_confirmation[pair] = False
                     send_telegram("❌ واخا، تجاوزنا هاد التريد. غادي نكملو نراقبو السوق 👀")
 
         except Exception as e:
@@ -652,13 +661,15 @@ def send_hourly_report(pairs_status):
         send_telegram(get_debug_report(pair))
 
 def main_loop():
-    global pending_trade, waiting_confirmation
+    global pending_trades, waiting_confirmation
     time.sleep(5)
     set_webhook()
 
     opportunities = pull_from_github()
     last_report_hour = -1
     already_warned = {}  # كيتذكر واش بعت تحذير لكل زوج
+    last_signal = {}       # آخر إشارة مرسلة: {"USD/JPY": "BUY", "AUD/USD": None}
+    last_signal_valid = {} # واش الشروط كانت محققة فالـ iteration السابقة
 
     while True:
         now = datetime.now(timezone.utc)
@@ -696,13 +707,13 @@ def main_loop():
             fetch_all_data()
 
             # تقرير كل ساعة
-            if now.hour != last_report_hour and now.minute < 15 and not waiting_confirmation:
+            if now.hour != last_report_hour and now.minute < 15 and not any(waiting_confirmation.values()):
                 last_report_hour = now.hour
                 pairs_status = {pair: {} for pair in PAIRS}
                 send_hourly_report(pairs_status)
 
             # تحذير مسبق 15 دقيقة قبل الإشارة
-            if not waiting_confirmation:
+            if not any(waiting_confirmation.values()):
                 for pair in PAIRS:
                     result = get_cached_data(pair, "15min")
                     if result:
@@ -725,10 +736,25 @@ def main_loop():
                                 # RSI رجع للمنطقة المحايدة — نريسيتو
                                 already_warned.pop(pair, None)
 
-            if not waiting_confirmation:
-                for pair in PAIRS:
+            for pair in PAIRS:
+                    if waiting_confirmation.get(pair):
+                        continue
+
                     trade = analyze_pair(pair)
-                    if not trade:
+                    current_direction = "BUY" if trade and "BUY" in trade["direction"] else ("SELL" if trade and "SELL" in trade["direction"] else None)
+
+                    # إذا ماكانش trade — ريسيت الذاكرة باش تسمح بإشارة جديدة لما يرجع
+                    if not current_direction:
+                        last_signal_valid[pair] = False
+                        last_signal.pop(pair, None)
+                        continue
+
+                    # واش الشروط كانت فاشلة فالـ iteration السابقة؟ (revalidation)
+                    was_invalid = not last_signal_valid.get(pair, True)
+                    last_signal_valid[pair] = True
+
+                    # إذا نفس الاتجاه وما فشلتش الشروط بينهم → skip (لا تكرار)
+                    if last_signal.get(pair) == current_direction and not was_invalid:
                         continue
 
                     danger_news, warning_news = get_high_impact_news(pair)
@@ -801,9 +827,10 @@ def main_loop():
                         f"واش بغيتي تدخل هاد التريد؟"
                     )
 
-                    pending_trade = trade
+                    pending_trades[pair] = trade          # كل زوج عنده trade خاص بيه
+                    last_signal[pair] = current_direction  # تسجيل الإشارة باش ما تتكررش
                     send_with_buttons(msg, trade)
-                    break
+                    # ماكاينش break — كيكمل على باقي الأزواج
 
         except Exception as e:
             print(f"Error: {e}")
