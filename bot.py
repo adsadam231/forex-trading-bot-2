@@ -406,12 +406,31 @@ def analyze_pair(pair):
     price = main["price"]
     atr = main["atr"]
     if "BUY" in direction:
-        tp = round(price + atr * 1.5, 6)
-        sl = round(price - atr, 6)
+        is_jpy = pair.endswith("JPY") or pair.startswith("JPY")
+        min_tp = 1.80 if is_jpy else 0.00180
+        max_tp = 2.20 if is_jpy else 0.00220
+        tp_distance = max(min(atr * 1.5, max_tp), min_tp)
+        sl_distance = tp_distance / 1.5
+        rr = round(tp_distance / sl_distance, 2)
+        if is_jpy:
+            tp = round(price + tp_distance, 3)
+            sl = round(price - sl_distance, 3)
+        else:
+            tp = round(price + tp_distance, 5)
+            sl = round(price - sl_distance, 5)
     else:
-        tp = round(price - atr * 1.5, 6)
-        sl = round(price + atr, 6)
-    rr = round(abs(tp - price) / abs(sl - price), 2)
+        is_jpy = pair.endswith("JPY") or pair.startswith("JPY")
+        min_tp = 1.80 if is_jpy else 0.00180
+        max_tp = 2.20 if is_jpy else 0.00220
+        tp_distance = max(min(atr * 1.5, max_tp), min_tp)
+        sl_distance = tp_distance / 1.5
+        rr = round(tp_distance / sl_distance, 2)
+        if is_jpy:
+            tp = round(price - tp_distance, 3)
+            sl = round(price + sl_distance, 3)
+        else:
+            tp = round(price - tp_distance, 5)
+            sl = round(price + sl_distance, 5)
     return {
         "pair": pair,
         "direction": direction,
