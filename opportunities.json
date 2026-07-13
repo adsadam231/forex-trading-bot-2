@@ -94,5 +94,17 @@
     "rr": 1.5,
     "strength": 2,
     "cancelled": false
+  },
+  {
+    "date": "2026-07-13 14:32",
+    "time": "14:32 UTC",
+    "pair": "AUD/USD",
+    "direction": "SELL 📉",
+    "price": 0.69374,
+    "tp": 0.69302,
+    "sl": 0.69422,
+    "rr": 1.5,
+    "strength": 2,
+    "cancelled": false
   }
 ]
