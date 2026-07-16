@@ -687,14 +687,8 @@ def main_loop():
     opportunities = pull_from_github()
     last_report_hour = -1
     already_warned = {}  # كيتذكر واش بعت تحذير لكل زوج
-    last_signal = {}
-    # كيحفظ آخر إشارة مرسلة لكل pair:
-    # {"USD/JPY": {"direction": "BUY", "macd_cross": "positive"}}
-    # macd_cross = "positive" إذا MACD > Signal وقت الإرسال
-    #            = "negative" إذا MACD < Signal وقت الإرسال
-    # إشارة جديدة تتبعت فقط إذا:
-    # 1. تغير الاتجاه (BUY → SELL أو العكس)
-    # 2. أو MACD تقاطع لجهة معاكسة ثم رجع لنفس الجهة (تقاطع جديد حقيقي)
+    last_signal = {}       # آخر إشارة مرسلة: {"USD/JPY": "BUY", "AUD/USD": None}
+    last_signal_valid = {} # واش الشروط كانت محققة فالـ iteration السابقة
 
     while True:
         now = datetime.now(timezone.utc)
@@ -768,25 +762,19 @@ def main_loop():
                     trade = analyze_pair(pair)
                     current_direction = "BUY" if trade and "BUY" in trade["direction"] else ("SELL" if trade and "SELL" in trade["direction"] else None)
 
-                    # إذا ماكانش trade — ريسيت الذاكرة
+                    # إذا ماكانش trade — ريسيت الذاكرة باش تسمح بإشارة جديدة لما يرجع
                     if not current_direction:
+                        last_signal_valid[pair] = False
                         last_signal.pop(pair, None)
                         continue
 
-                    # نحدد جهة MACD الحالية فالـ timeframe الأول المؤكد
-                    first_tf_data = list(trade["details"].values())[0]
-                    current_macd_cross = "positive" if first_tf_data["macd"] > first_tf_data["signal"] else "negative"
+                    # واش الشروط كانت فاشلة فالـ iteration السابقة؟ (revalidation)
+                    was_invalid = not last_signal_valid.get(pair, True)
+                    last_signal_valid[pair] = True
 
-                    # نتحقق من آخر إشارة مرسلة
-                    prev = last_signal.get(pair)
-
-                    if prev is not None:
-                        same_direction = prev["direction"] == current_direction
-                        same_cross     = prev["macd_cross"] == current_macd_cross
-
-                        # نفس الاتجاه + نفس تقاطع MACD → skip (تكرار)
-                        if same_direction and same_cross:
-                            continue
+                    # إذا نفس الاتجاه وما فشلتش الشروط بينهم → skip (لا تكرار)
+                    if last_signal.get(pair) == current_direction and not was_invalid:
+                        continue
 
                     danger_news, warning_news = get_high_impact_news(pair)
 
@@ -858,11 +846,8 @@ def main_loop():
                         f"واش بغيتي تدخل هاد التريد؟"
                     )
 
-                    pending_trades[pair] = trade
-                    last_signal[pair] = {
-                        "direction":  current_direction,
-                        "macd_cross": current_macd_cross,
-                    }
+                    pending_trades[pair] = trade          # كل زوج عنده trade خاص بيه
+                    last_signal[pair] = current_direction  # تسجيل الإشارة باش ما تتكررش
                     send_with_buttons(msg, trade)
                     # ماكاينش break — كيكمل على باقي الأزواج
 
