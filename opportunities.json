@@ -598,5 +598,17 @@
     "rr": 1.5,
     "strength": 2,
     "cancelled": false
+  },
+  {
+    "date": "2026-07-22 13:30",
+    "time": "13:30 UTC",
+    "pair": "USD/JPY",
+    "direction": "BUY 📈",
+    "price": 163.07738,
+    "tp": 163.142,
+    "sl": 163.034,
+    "rr": 1.5,
+    "strength": 2,
+    "cancelled": false
   }
 ]
