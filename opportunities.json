@@ -574,5 +574,17 @@
     "rr": 1.5,
     "strength": 2,
     "cancelled": false
+  },
+  {
+    "date": "2026-07-22 01:29",
+    "time": "01:29 UTC",
+    "pair": "AUD/USD",
+    "direction": "BUY 📈",
+    "price": 0.70064,
+    "tp": 0.70109,
+    "sl": 0.70034,
+    "rr": 1.5,
+    "strength": 2,
+    "cancelled": false
   }
 ]
