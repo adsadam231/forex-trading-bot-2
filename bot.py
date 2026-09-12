@@ -165,6 +165,12 @@ def get_price_data(pair, interval="15min", outputsize=250):
         if "values" not in data:
             print(f"API Error {pair} {interval}: {data.get('message', data.get('code', 'unknown'))}")
             return None
+
+        # ==== فحص تشخيصي: واش آخر شمعة مسدودة ولا لسع كتتكون؟ (بلا تغيير فأي منطق) ====
+        if data["values"]:
+            last_candle_time = data["values"][0]["datetime"]
+            print(f"🕐 [{pair} {interval}] آخر شمعة: {last_candle_time} | الوقت الحالي (UTC): {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+
         closes = [float(v["close"]) for v in reversed(data["values"])]
         highs = [float(v["high"]) for v in reversed(data["values"])]
         lows = [float(v["low"]) for v in reversed(data["values"])]
