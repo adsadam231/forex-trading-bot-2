@@ -4,7 +4,7 @@ import time
 import requests
 import threading
 import base64
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # ============================================================
@@ -148,40 +148,83 @@ def get_news_context():
         return [], [], []
 
 price_cache = {}
-CACHE_SECONDS = {"15min": 900, "1h": 3600, "4h": 14400}
+CACHE_SECONDS = {"15min": 300, "1h": 3600, "4h": 14400}
+INTERVAL_MINUTES = {"15min": 15, "1h": 60, "4h": 240}
 
 def get_price_data(pair, interval="15min", outputsize=250):
     global price_cache
+
     cache_key = f"{pair}_{interval}"
     now_ts = time.time()
+
     if cache_key in price_cache:
         cached_time = price_cache[cache_key]["time"]
         if now_ts - cached_time < CACHE_SECONDS.get(interval, 900):
             return price_cache[cache_key]["data"]
-    params = {"symbol": pair, "interval": interval, "outputsize": outputsize, "apikey": TWELVE_DATA_API_KEY}
+
+    params = {
+        "symbol": pair,
+        "interval": interval,
+        "outputsize": outputsize,
+        "apikey": TWELVE_DATA_API_KEY
+    }
+
     try:
-        r = requests.get("https://api.twelvedata.com/time_series", params=params, timeout=30)
+        r = requests.get(
+            "https://api.twelvedata.com/time_series",
+            params=params,
+            timeout=15
+        )
+
         data = r.json()
+
         if "values" not in data:
-            print(f"API Error {pair} {interval}: {data.get('message', data.get('code', 'unknown'))}")
+            print(
+                f"API Error {pair} {interval}: "
+                f"{data.get('message', data.get('code', 'unknown'))}"
+            )
             return None
 
-        # ==== فحص تشخيصي: واش آخر شمعة مسدودة ولا لسع كتتكون؟ (بلا تغيير فأي منطق) ====
-        if data["values"]:
-            last_candle_time = data["values"][0]["datetime"]
-            print(f"🕐 [{pair} {interval}] آخر شمعة: {last_candle_time} | الوقت الحالي (UTC): {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+        values = data["values"]  # الأحدث أولاً حسب Twelve Data
 
-        closes = [float(v["close"]) for v in reversed(data["values"])]
-        highs = [float(v["high"]) for v in reversed(data["values"])]
-        lows = [float(v["low"]) for v in reversed(data["values"])]
-        opens = [float(v["open"]) for v in reversed(data["values"])]
+        # ==== فحص: واش آخر شمعة (values[0]) مسدودة فعلاً؟ ====
+        if values:
+            try:
+                last_candle_start = datetime.fromisoformat(values[0]["datetime"]).replace(tzinfo=timezone.utc)
+                interval_min = INTERVAL_MINUTES.get(interval, 15)
+                candle_close_time = last_candle_start + timedelta(minutes=interval_min)
+                now_utc = datetime.now(timezone.utc)
+
+                if now_utc < candle_close_time:
+                    # الشمعة لسع كتتكون — نحيدوها، نستعملو اللي قبلها (مسدودة مؤكد)
+                    print(f"⏳ [{pair} {interval}] آخر شمعة لسع كتتكون (بدات {last_candle_start}, تسد {candle_close_time}) — تم تجاهلها", flush=True)
+                    values = values[1:]
+            except Exception as e:
+                print(f"⚠️ [{pair} {interval}] فشل فحص closed-candle: {e}", flush=True)
+                # fail-safe: إلا فشل الفحص لأي سبب، نكملو بالداتا الأصلية بلا ما نوقفو البوت
+
+        if not values:
+            print(f"⚠️ [{pair} {interval}] ماكاينش شموع مسدودة كافية بعد الفحص", flush=True)
+            return None
+
+        closes = [float(v["close"]) for v in reversed(values)]
+        highs = [float(v["high"]) for v in reversed(values)]
+        lows = [float(v["low"]) for v in reversed(values)]
+        opens = [float(v["open"]) for v in reversed(values)]
+
         result = (closes, highs, lows, opens)
-        price_cache[cache_key] = {"time": now_ts, "data": result}
+
+        price_cache[cache_key] = {
+            "time": now_ts,
+            "data": result
+        }
+
         return result
+
     except Exception as e:
         print(f"Price API Error {pair} {interval}: {e}")
         return None
-
+        
 def calc_atr(highs, lows, closes, period=14):
     trs = []
     for i in range(1, len(closes)):
