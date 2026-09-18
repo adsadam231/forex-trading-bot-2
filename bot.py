@@ -399,7 +399,7 @@ def analyze_timeframe(pair, interval):
         displacement_value = None
         bos_index = len(closes) - 1
 
-            if direction == "BUY":
+        if direction == "BUY":
             last_swing_high = get_last_swing(swings, "high")
             if last_swing_high and current_close > last_swing_high[1]:
                 if has_displacement(opens, highs, lows, closes, bos_index, last_swing_high[1], atr, "BUY"):
