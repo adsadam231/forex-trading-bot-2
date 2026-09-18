@@ -399,18 +399,28 @@ def analyze_timeframe(pair, interval):
         displacement_value = None
         bos_index = len(closes) - 1
 
-        if direction == "BUY":
+                if direction == "BUY":
             last_swing_high = get_last_swing(swings, "high")
-            if last_swing_high and has_displacement(opens, highs, lows, closes, bos_index, last_swing_high[1], atr, "BUY"):
-                bos_found = True
-                bos_level = last_swing_high[1]
-                displacement_value = round(closes[bos_index] - bos_level, 4)
+            if last_swing_high and current_close > last_swing_high[1]:
+                if has_displacement(opens, highs, lows, closes, bos_index, last_swing_high[1], atr, "BUY"):
+                    bos_found = True
+                    bos_level = last_swing_high[1]
+                    displacement_value = round(closes[bos_index] - bos_level, 4)
+                else:
+                    break_dist = round(closes[bos_index] - last_swing_high[1], 4)
+                    body = round(abs(closes[bos_index] - opens[bos_index]), 4)
+                    print(f"🔸 [{pair}] BOS كان يتأكد بمنطق v1 (BUY)، رفضتو v2 — break_dist={break_dist} (خاص >={round(atr*DISPLACEMENT_BREAK_ATR,4)}), body={body} (خاص >={round(atr*DISPLACEMENT_BODY_ATR,4)}), ATR={atr}", flush=True)
         else:
             last_swing_low = get_last_swing(swings, "low")
-            if last_swing_low and has_displacement(opens, highs, lows, closes, bos_index, last_swing_low[1], atr, "SELL"):
-                bos_found = True
-                bos_level = last_swing_low[1]
-                displacement_value = round(bos_level - closes[bos_index], 4)
+            if last_swing_low and current_close < last_swing_low[1]:
+                if has_displacement(opens, highs, lows, closes, bos_index, last_swing_low[1], atr, "SELL"):
+                    bos_found = True
+                    bos_level = last_swing_low[1]
+                    displacement_value = round(bos_level - closes[bos_index], 4)
+                else:
+                    break_dist = round(last_swing_low[1] - closes[bos_index], 4)
+                    body = round(abs(closes[bos_index] - opens[bos_index]), 4)
+                    print(f"🔸 [{pair}] BOS كان يتأكد بمنطق v1 (SELL)، رفضتو v2 — break_dist={break_dist} (خاص >={round(atr*DISPLACEMENT_BREAK_ATR,4)}), body={body} (خاص >={round(atr*DISPLACEMENT_BODY_ATR,4)}), ATR={atr}", flush=True)
 
         if bos_found:
             if direction == "BUY":
