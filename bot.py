@@ -45,7 +45,7 @@ RECENT_CHECK_CANDLES = 3
 PULLBACK_TOUCH_ATR = 0.3
 
 # ==== Displacement (BOS حقيقي، ماشي كسر هامشي) ====
-DISPLACEMENT_BREAK_ATR = 0.25   # الكسر خاصو يتجاوز المستوى بـ 0.25×ATR على الأقل
+DISPLACEMENT_BREAK_ATR = 0.20   # الكسر خاصو يتجاوز المستوى بـ 0.20×ATR على الأقل (خُفف من 0.25 بعد دليل حي)
 DISPLACEMENT_BODY_ATR = 0.30    # جسم شمعة الكسر خاصو يكون ≥0.30×ATR (ماشي دوجي/wick)
 
 # ==== SL/TP هيكلي ====
