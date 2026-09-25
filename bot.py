@@ -36,6 +36,7 @@ OPPORTUNITIES_FILE = "opportunities_gold.json"
 PRICE_DECIMALS = 2
 GOLD_NEWS_CURRENCIES = ["USD"]
 
+ENABLE_KILLZONE = False   # 🔧 بدلها لـ True باش ترجع Killzone تخدم
 SWING_LOOKBACK = 3
 MAJOR_SWING_LOOKBACK = 5
 PULLBACK_MAX_CANDLES = 6
@@ -101,6 +102,8 @@ def set_webhook():
 
 def is_killzone():
     """بوابة الإرسال الفعلي: London+NY overlap بشكل عام (نفس منطق الفوركس)"""
+    if not ENABLE_KILLZONE:
+        return True
     now_utc = datetime.now(timezone.utc)
     return 7 <= now_utc.hour < 17
 
