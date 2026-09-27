@@ -193,5 +193,70 @@
       "last_swing_high_15m": 4286.34596,
       "last_swing_low_15m": 4286.03948
     }
+  },
+  {
+    "date": "2026-09-27 22:24",
+    "time": "22:24 UTC",
+    "pair": "XAU/USD",
+    "direction": "SELL 📉",
+    "price": 4269.65215,
+    "tp": 4254.78,
+    "sl": 4287.75,
+    "rr": 0.82,
+    "strength": 3,
+    "cancelled": false,
+    "session": "Late_NY_PreAsian",
+    "target_source": "htf_fallback",
+    "sl_buffer_used": 0.3471,
+    "news_context": [],
+    "timestamp": 1790547846.682799,
+    "market_info": {
+      "atr": 2.3141,
+      "current_price": 4269.65215
+    },
+    "htf_info": {
+      "h1_bias": "SELL",
+      "h1_choch_seen": false,
+      "h1_bos_seen": false,
+      "h1_major_swing_high": 4286.33577,
+      "h1_major_swing_low": 4254.77599,
+      "h4_bias": "SELL",
+      "h4_choch_seen": true,
+      "h4_bos_seen": true,
+      "h4_major_swing_high": 4315.59598,
+      "h4_major_swing_low": 4254.77599
+    },
+    "smc_info": {
+      "sweep_level": 4286.34596,
+      "candles_since_sweep": 0,
+      "bos_level": 4286.03948,
+      "displacement_value": 16.3873,
+      "candles_since_bos": 0,
+      "ob_low": 4286.07973,
+      "ob_high": 4287.40522,
+      "fvg_low": 4286.07973,
+      "fvg_high": 4287.40522
+    },
+    "entry_info": {
+      "entry_price": 4269.65215,
+      "tp": 4254.78,
+      "sl": 4287.75,
+      "rr": 0.82
+    },
+    "pullback_info": {
+      "pullback_boundary": 4286.07973,
+      "touched_ob_or_fvg": true
+    },
+    "candle_confirmation_info": {
+      "pattern": "Strong Bearish Candle",
+      "open": 4287.24544,
+      "high": 4287.24544,
+      "low": 4262.12678,
+      "close": 4269.65215
+    },
+    "swing_info": {
+      "last_swing_high_15m": 4286.34596,
+      "last_swing_low_15m": 4286.03948
+    }
   }
 ]
